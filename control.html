@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pose Controller</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body style="background: #111; color: white; font-family: sans-serif;">
+    <h2>Controller: Camera & AI</h2>
+    <video id="input_video" style="display:none;"></video>
+    <canvas id="output_canvas" width="480" height="360" style="border: 1px solid #333;"></canvas>
+    <p id="status">Connecting to Screen...</p>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const SCREEN_ID = 'neon_game_screen_2026'; // ID главного экрана
+        const peer = new Peer();
+        let connection = null;
+
+        // 1. Настройка PeerJS
+        peer.on('open', () => {
+            console.log('Controller ID: ' + peer.id);
+            connectToScreen();
+        });
+
+        function connectToScreen() {
+            connection = peer.connect(SCREEN_ID);
+            connection.on('open', () => {
+                document.getElementById('status').innerText = "CONNECTED TO SCREEN ✅";
+            });
+        }
+
+        // 2. Настройка MediaPipe Pose
+        const pose = new Pose({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+        }});
+
+        pose.setOptions({
+            modelComplexity: 1, // 0 - быстро, 1 - средне, 2 - точно
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults((results) => {
+            // Рисуем превью для отладки на контроллере
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.poseLandmarks) {
+                // ОТПРАВЛЯЕМ ДАННЫЕ НА ЭКРАН
+                if (connection && connection.open) {
+                    connection.send({
+                        type: 'POSE_DATA',
+                        landmarks: results.poseLandmarks // Массив из 33 точек (x, y, z)
+                    });
+                }
+            }
+        });
+
+        // 3. Запуск камеры
+        async function startCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({video: true});
+            videoElement.srcObject = stream;
+            videoElement.play();
+            
+            async function detectionFrame() {
+                await pose.send({image: videoElement});
+                requestAnimationFrame(detectionFrame);
+            }
+            detectionFrame();
+        }
+
+        startCamera();
+    </script>
+</body>
+</html>
