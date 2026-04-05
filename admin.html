@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Game Admin</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { background: #111; color: #fff; text-align: center; font-family: sans-serif; }
+        button { width: 200px; padding: 20px; margin: 10px; font-size: 20px; border-radius: 10px; border: none; cursor: pointer; }
+        .start { background: #28a745; color: white; }
+        .stop { background: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <h1>ZHANAT SHOW ADMIN</h1>
+    <button class="start" onclick="send('START')">START GAME</button>
+    <button class="stop" onclick="send('STOP')">RESET</button>
+    <br>
+    <button onclick="send('EASY')">EASY</button>
+    <button onclick="send('HARD')">HARD</button>
+
+    <script>
+        const SCREEN_ID = 'neon_game_screen_2026';
+        const peer = new Peer();
+        let conn = null;
+
+        peer.on('open', () => conn = peer.connect(SCREEN_ID));
+
+        function send(cmd) {
+            if (conn) conn.send({ type: 'CONTROL', command: cmd });
+        }
+    </script>
+</body>
+</html>
