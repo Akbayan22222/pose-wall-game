@@ -1,26 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <title>NEON POSE SCREEN</title>
+    <meta charset="UTF-8">
+    <title>NEON POSE GAME - SCREEN</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; }
         canvas { display: block; }
+        
+        /* Интерфейс (UI) */
         #ui {
             position: absolute; top: 20px; width: 100%;
             display: flex; justify-content: space-between;
             padding: 0 50px; box-sizing: border-box;
-            color: #fff; text-shadow: 0 0 10px #0ff; font-size: 30px;
+            color: #fff; text-shadow: 0 0 15px #0ff; font-size: 35px;
+            pointer-events: none;
         }
-        .score-box { border: 2px solid #0ff; padding: 10px 20px; border-radius: 10px; background: rgba(0,255,255,0.1); }
+        .score-box { 
+            border: 3px solid #0ff; padding: 15px 30px; 
+            border-radius: 15px; background: rgba(0,255,255,0.1); 
+            box-shadow: inset 0 0 20px rgba(0,255,255,0.2);
+        }
+        #center-info { text-align: center; color: gold; text-shadow: 0 0 15px gold; }
+        
+        /* Анимация текста Perfect/Miss */
+        @keyframes fadeOut {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -80%) scale(1.5); }
+        }
     </style>
 </head>
 <body>
+
     <div id="ui">
         <div class="score-box">P1: <span id="score1">0</span></div>
-        <div id="level-info" style="color: gold;">LEVEL: EASY</div>
-        <div class="score-box" style="border-color: #f0f; text-shadow: 0 0 10px #f0f;">P2: <span id="score2">0</span></div>
+        <div id="center-info">
+            <div id="status-text">WAITING...</div>
+            <div id="level-text" style="font-size: 20px;">LEVEL: EASY</div>
+        </div>
+        <div class="score-box" style="border-color: #f0f; text-shadow: 0 0 15px #f0f;">P2: <span id="score2">0</span></div>
     </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <script>
@@ -28,74 +48,149 @@
         const ctx = canvas.getContext('2d');
         const SCREEN_ID = 'neon_game_screen_2026';
         const peer = new Peer(SCREEN_ID);
-        
+
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
+        // Состояние игры
         let player1Poses = null;
+        let score = 0;
+        let gameActive = false;
+        let wallSpeed = 0.5;
+        let currentWall = null;
 
-        // 1. Прием данных от контроллера
+        // 1. ПРИЕМ ДАННЫХ (PeerJS)
+        peer.on('open', () => {
+            console.log("Screen ID: " + SCREEN_ID);
+            document.getElementById('status-text').innerText = "READY";
+        });
+
         peer.on('connection', (conn) => {
             conn.on('data', (data) => {
+                // Координаты от камеры
                 if (data.type === 'POSE_DATA') {
                     player1Poses = data.landmarks;
+                }
+                // Команды от пульта (admin.html)
+                if (data.type === 'CONTROL') {
+                    if (data.command === 'START') { gameActive = true; score = 0; document.getElementById('score1').innerText = "0"; }
+                    if (data.command === 'STOP') { gameActive = false; currentWall = null; }
+                    if (data.command === 'EASY') wallSpeed = 0.5;
+                    if (data.command === 'HARD') wallSpeed = 1.2;
                 }
             });
         });
 
-        // 2. Функция рисования неонового скелета
+        // 2. ШАБЛОНЫ ПОЗ (Эталоны для сравнения)
+        const poseTemplates = [
+            { name: "T-POSE", points: { 15: {x: 0.2, y: 0.5}, 16: {x: 0.8, y: 0.5} } }, // Руки в стороны
+            { name: "HANDS_UP", points: { 15: {x: 0.4, y: 0.1}, 16: {x: 0.6, y: 0.1} } }, // Руки вверх
+            { name: "STAR", points: { 15: {x: 0.1, y: 0.2}, 16: {x: 0.9, y: 0.2}, 27: {x: 0.3, y: 0.9}, 28: {x: 0.7, y: 0.9} } } // Звезда
+        ];
+
+        // 3. КЛАСС СТЕНЫ
+        class Wall {
+            constructor() {
+                this.z = 100; // Дистанция
+                this.template = poseTemplates[Math.floor(Math.random() * poseTemplates.length)];
+                this.passed = false;
+            }
+
+            update() {
+                this.z -= wallSpeed;
+                if (this.z <= 5 && !this.passed) {
+                    this.checkMatch();
+                    this.passed = true;
+                }
+            }
+
+            draw() {
+                let scale = 100 / (this.z + 1);
+                let w = canvas.width * 0.4 * scale;
+                let h = canvas.height * 0.7 * scale;
+                let x = (canvas.width - w) / 2;
+                let y = (canvas.height - h) / 2;
+
+                ctx.save();
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = "#0ff";
+                ctx.strokeStyle = `rgba(0, 255, 255, ${scale/8})`;
+                ctx.lineWidth = 10;
+                ctx.strokeRect(x, y, w, h); // Рамка стены
+
+                // Рисуем подсказку (вырез) внутри стены
+                ctx.setLineDash([10, 10]);
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+                ctx.strokeRect(x + w*0.2, y + h*0.2, w*0.6, h*0.6); 
+                ctx.restore();
+            }
+
+            checkMatch() {
+                if (!player1Poses) return;
+                let hits = 0, total = 0;
+                for (let id in this.template.points) {
+                    total++;
+                    let p = player1Poses[id];
+                    let t = this.template.points[id];
+                    let dist = Math.sqrt(Math.pow(p.x - t.x, 2) + Math.pow(p.y - t.y, 2));
+                    if (dist < 0.2) hits++;
+                }
+                if (hits/total > 0.6) { triggerEffect("PERFECT", "#00ffcc"); score += 100; }
+                else { triggerEffect("MISS", "#ff0055"); score -= 50; }
+                document.getElementById('score1').innerText = score;
+            }
+        }
+
+        function triggerEffect(txt, col) {
+            const el = document.createElement('div');
+            el.innerText = txt;
+            el.style.cssText = `position:absolute; top:50%; left:50%; color:${col}; font-size:120px; text-shadow: 0 0 20px ${col}; animation: fadeOut 1s forwards; z-index:100;`;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 1000);
+        }
+
+        // 4. ОТРИСОВКА СИЛУЭТА
         function drawNeonSkeleton(landmarks, color) {
             if (!landmarks) return;
+            ctx.shadowBlur = 25; ctx.shadowColor = color;
+            ctx.strokeStyle = color; ctx.lineWidth = 10; ctx.lineCap = 'round';
 
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = color;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 8;
-            ctx.lineCap = 'round';
-
-            // Соединения костей (индексы MediaPipe)
-            const connections = [
-                [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], // Руки
-                [11, 23], [12, 24], [23, 24], // Торс
-                [23, 25], [25, 27], [24, 26], [26, 28] // Ноги
-            ];
-
+            const bones = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
             ctx.beginPath();
-            connections.forEach(([i, j]) => {
-                const pt1 = landmarks[i];
-                const pt2 = landmarks[j];
-                ctx.moveTo(pt1.x * canvas.width, pt1.y * canvas.height);
-                ctx.lineTo(pt2.x * canvas.width, pt2.y * canvas.height);
+            bones.forEach(([i, j]) => {
+                ctx.moveTo(landmarks[i].x * canvas.width, landmarks[i].y * canvas.height);
+                ctx.lineTo(landmarks[j].x * canvas.width, landmarks[j].y * canvas.height);
             });
             ctx.stroke();
 
-            // Рисуем голову (упрощенно)
+            // Голова
             ctx.beginPath();
-            ctx.arc(landmarks[0].x * canvas.width, landmarks[0].y * canvas.height, 30, 0, Math.PI*2);
+            ctx.arc(landmarks[0].x * canvas.width, landmarks[0].y * canvas.height, 35, 0, Math.PI*2);
             ctx.stroke();
         }
 
-        // 3. Главный цикл игры
-        function gameLoop() {
-            // Очистка с эффектом шлейфа (motion blur)
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Рисуем "Неоновый тоннель" (сетка на полу)
-            drawGrid();
-
-            // Рисуем игрока
-            drawNeonSkeleton(player1Poses, '#00ffff');
-
-            requestAnimationFrame(gameLoop);
+        // 5. ГЛАВНЫЙ ЦИКЛ
+        function drawGrid() {
+            ctx.strokeStyle = '#002222'; ctx.lineWidth = 1;
+            for(let i=0; i<canvas.width; i+=100) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+            for(let i=0; i<canvas.height; i+=100) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
         }
 
-        function drawGrid() {
-            ctx.strokeStyle = '#111';
-            ctx.lineWidth = 1;
-            for(let i=0; i<canvas.width; i+=50) {
-                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+        function gameLoop() {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawGrid();
+
+            if (gameActive) {
+                if (!currentWall || currentWall.z < 0) currentWall = new Wall();
+                currentWall.update();
+                currentWall.draw();
             }
+
+            drawNeonSkeleton(player1Poses, "#00ffff");
+
+            requestAnimationFrame(gameLoop);
         }
 
         gameLoop();
